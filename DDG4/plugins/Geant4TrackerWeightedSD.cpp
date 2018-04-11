@@ -77,6 +77,7 @@ namespace dd4hep {
       Position              mean_pos;
       Geant4Sensitive*      sensitive            = 0;
       G4VSensitiveDetector* thisSD               = 0;
+      G4VPhysicalVolume*    thisPV               = 0;
       double                distance_to_inside   = 0.0;
       double                distance_to_outside  = 0.0;
       double                mean_time            = 0.0;
@@ -125,6 +126,8 @@ namespace dd4hep {
         post = pre;
         parent = step->GetTrack()->GetParentID();
         g4ID = step->GetTrack()->GetTrackID();
+        Geant4StepHandler startVolume(step);
+        thisPV = startVolume.preVolume();
         return *this;
       }
 
@@ -259,7 +262,7 @@ namespace dd4hep {
         const void* prePV  = h.preVolume();
         const void* postSD = h.postSD();
         const void* preSD  = h.preSD();
-        G4VSolid* solid = (preSD == thisSD) ? preSolid : postSolid;
+        G4VSolid* solid = (prePV == thisPV) ? preSolid : postSolid;
         // 1) Track killed inside SD: trace incomplete. This deposition must be added as well.
         if ( current == h.trkID() && !h.trkAlive() )  {
           hit_flag |= Geant4Tracker::Hit::HIT_KILLED_TRACK;
@@ -267,22 +270,24 @@ namespace dd4hep {
           return true;
         }
         // 2) Track leaving SD volume. Sensitive detector changed. Store hit.
-        else if ( current == h.trkID() && postSD != thisSD )  {
-          update(step).calc_dist_out(solid).extractHit(kOutside);
+        else if ( current == h.trkID() && postPV != thisPV )  {
+          calc_dist_out(solid).extractHit(kOutside);
+          start(step, h.pre);
+          update(step);
           return true;
         }
         // 3) Track leaving SD volume. Store hit.
-        else if ( current == h.trkID() && postSD == thisSD && post_inside == kSurface )  {
+        else if ( current == h.trkID() && postPV == thisPV && post_inside == kSurface )  {
           update(step).calc_dist_out(solid).extractHit(kSurface);
           return true;
         }
         // 4) Track leaving SD volume. Store hit.
-        else if ( current == h.trkID() && postSD == thisSD && post_inside == kOutside )  {
+        else if ( current == h.trkID() && postPV == thisPV && post_inside == kOutside )  {
           update(step).calc_dist_out(solid).extractHit(post_inside);
           return true;
         }
         // 5) Normal update: either intermediate deposition or track is going to be killed.
-        else if ( current == h.trkID() && postSD == thisSD && post_inside == kInside )  {
+        else if ( current == h.trkID() && postPV == thisPV && post_inside == kInside )  {
           last_inside = post_inside;
           update(step).calc_dist_out(solid);
           return true;
@@ -297,7 +302,7 @@ namespace dd4hep {
         if ( current < 0 )  {
           EInside  inside  = pre_inside;
           // Track entering SD volume
-          if ( preSD != thisSD )   {
+          if ( prePV != thisPV )   {
             start(step, h.post);
             inside = post_inside;
             sensitive->print("++++++++++ Using POST step volume to start hit -- dubious ?");
@@ -334,11 +339,11 @@ namespace dd4hep {
           extractHit(post_inside);
         }
         // Avoid danglich hits if the track leaves the sensitive volume
-        else if ( thisSD == preSD && (preSD != postSD || prePV != postPV) )  {
+        else if ( thisPV == prePV && (preSD != postSD || prePV != postPV) )  {
           extractHit(post_inside);
         }
         // This should simply not happen!
-        else if ( thisSD == postSD && (preSD != postSD || prePV != postPV) )  {
+        else if ( thisPV == postPV && (preSD != postSD || prePV != postPV) )  {
           sensitive->error("+++++ WRONG!!! Extract. How did we get here?");
           extractHit(post_inside);
         }
